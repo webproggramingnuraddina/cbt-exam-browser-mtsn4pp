@@ -37,10 +37,13 @@ class MainActivity : AppCompatActivity() {
         errorOverlay = findViewById(R.id.errorOverlay)
 
         setupWebView()
-        setupErrorOverlay()
-        setupExitButton()
+setupErrorOverlay()
+setupExitButton()
 
-        webView.loadUrl(getString(R.string.exam_url))
+// Aktifkan penguncian perangkat
+enterKioskMode()
+
+webView.loadUrl(getString(R.string.exam_url))
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -59,6 +62,18 @@ class MainActivity : AppCompatActivity() {
                 or View.SYSTEM_UI_FLAG_FULLSCREEN
             )
     }
+    // ---------- KIOSK MODE ----------
+private fun enterKioskMode() {
+    try {
+        startLockTask()
+    } catch (e: Exception) {
+        Toast.makeText(
+            this,
+            "Gagal mengaktifkan mode ujian",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+}
 
     // ---------- WebView setup ----------
 
@@ -169,7 +184,10 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.exit_dialog_title)
             .setMessage(R.string.exit_dialog_message)
-            .setPositiveButton(R.string.exit_confirm) { _, _ -> finishAndRemoveTask() }
+            .setPositiveButton(R.string.exit_confirm) { _, _ ->
+    stopLockTask()
+    finishAndRemoveTask()
+}
             .setNegativeButton(R.string.exit_cancel, null)
             .show()
     }
