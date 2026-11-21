@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
 setupErrorOverlay()
 setupExitButton()
+enterExamPinning()
 
 // Aktifkan penguncian perangkat
 enterKioskMode()
@@ -74,6 +75,24 @@ private fun enterKioskMode() {
         ).show()
     }
 }
+
+
+private fun enterExamPinning() {
+    try {
+        if (android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.LOLLIPOP) {
+
+            startLockTask()
+        }
+    } catch (e: Exception) {
+        android.util.Log.e(
+            "CBT",
+            "Gagal mengaktifkan penyematan aplikasi",
+            e
+        )
+    }
+}
+
 
     // ---------- WebView setup ----------
 
