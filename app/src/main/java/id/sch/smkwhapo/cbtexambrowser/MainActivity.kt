@@ -2,10 +2,15 @@
 package id.sch.smkwhapo.cbtexambrowser
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.webkit.*
@@ -22,12 +27,67 @@ class MainActivity : AppCompatActivity() {
 
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
+    // Status penguncian
+    private var wasPinned = false
+    private var examLoaded = false
+    private var exitConfirmed = false
+    private var terminationDialogShowing = false
+
+    private var pinningStartTime = 0L
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    // Waktu maksimum menunggu konfirmasi Screen Pinning
+    private val pinningTimeout = 15000L
+
+    private val pinningChecker = object : Runnable {
+        override fun run() {
+
+            if (exitConfirmed || isFinishing) return
+
+            if (isScreenPinned()) {
+
+                wasPinned = true
+
+                handler.removeCallbacks(this)
+
+                openExam()
+
+            } else {
+
+                val elapsed =
+                    SystemClock.elapsedRealtime() - pinningStartTime
+
+                if (elapsed >= pinningTimeout) {
+
+                    handler.removeCallbacks(this)
+
+                    showTerminationDialog(
+                        "Aplikasi Belum Disematkan",
+                        "Aplikasi CBT harus disematkan terlebih dahulu. " +
+                        "Silakan buka kembali aplikasi dan pilih Sematkan. " +
+                        "Ujian tidak dapat dimulai sebelum penguncian aktif."
+                    )
+
+                } else {
+
+                    handler.postDelayed(this, 500)
+                }
+            }
+        }
+    }
+
     private val fileChooserLauncher =
         registerForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
         ) { result ->
+
             val data =
-                if (result.resultCode == Activity.RESULT_OK) result.data else null
+                if (result.resultCode == Activity.RESULT_OK) {
+                    result.data
+                } else {
+                    null
+                }
 
             val uris = WebChromeClient.FileChooserParams.parseResult(
                 result.resultCode,
@@ -40,6 +100,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContentView(R.layout.activity_main)
 
         hideSystemBars()
@@ -52,11 +113,18 @@ class MainActivity : AppCompatActivity() {
         setupErrorOverlay()
         setupExitButton()
 
-        // Aktifkan Screen Pinning satu kali
+        // Sembunyikan halaman ujian sebelum sematan aktif
+        webView.visibility = View.GONE
+        progressBar.visibility = View.GONE
+        errorOverlay.visibility = View.GONE
+
+        // Coba aktifkan Screen Pinning
+        pinningStartTime = SystemClock.elapsedRealtime()
+
         enterExamPinning()
 
-        // Buka halaman CBT
-        webView.loadUrl(getString(R.string.exam_url))
+        // Tunggu konfirmasi dan periksa status aktual
+        handler.postDelayed(pinningChecker, 500)
     }
 
     // ---------- FULLSCREEN ----------
@@ -66,6 +134,13 @@ class MainActivity : AppCompatActivity() {
 
         if (hasFocus) {
             hideSystemBars()
+
+            // Periksa kembali jika aplikasi sebelumnya sudah disematkan
+            if (wasPinned) {
+                handler.post {
+                    checkAfterUnpin()
+                }
+            }
         }
     }
 
@@ -83,31 +158,109 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- SCREEN PINNING ----------
 
+    private fun isScreenPinned(): Boolean {
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return false
+        }
+
+        val activityManager =
+            getSystemService(ACTIVITY_SERVICE) as ActivityManager
+
+        return activityManager.lockTaskModeState !=
+            ActivityManager.LOCK_TASK_MODE_NONE
+    }
+
     private fun enterExamPinning() {
+
         try {
-            if (android.os.Build.VERSION.SDK_INT >=
-                android.os.Build.VERSION_CODES.LOLLIPOP
-            ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 startLockTask()
             }
-        } catch (e: Exception) {
-            Log.e("CBT", "Gagal mengaktifkan Screen Pinning", e)
 
-            Toast.makeText(
-                this,
-                "Gagal mengaktifkan penguncian aplikasi",
-                Toast.LENGTH_LONG
-            ).show()
+        } catch (e: Exception) {
+
+            Log.e("CBT", "Gagal mengaktifkan Screen Pinning", e)
+        }
+    }
+
+    private fun openExam() {
+
+        if (exitConfirmed || examLoaded) return
+
+        webView.visibility = View.VISIBLE
+        errorOverlay.visibility = View.GONE
+
+        webView.loadUrl(getString(R.string.exam_url))
+
+        examLoaded = true
+
+        Log.d("CBT", "Screen Pinning aktif. CBT dibuka.")
+    }
+
+    private fun checkAfterUnpin() {
+
+        if (exitConfirmed || !wasPinned) return
+
+        if (!isScreenPinned()) {
+
+            wasPinned = false
+
+            // Hentikan pemuatan halaman ujian
+            webView.stopLoading()
+
+            webView.visibility = View.GONE
+            progressBar.visibility = View.GONE
+            errorOverlay.visibility = View.GONE
+
+            Log.w("CBT", "Screen Pinning dilepaskan!")
+
+            showTerminationDialog(
+                "Peringatan Pelanggaran Ujian",
+                "Kamu telah melepaskan sematan aplikasi CBT. " +
+                "Aplikasi akan ditutup dan akses ujian dihentikan. " +
+                "Silakan hubungi pengawas ujian."
+            )
         }
     }
 
     private fun releaseExamPinning() {
+
         try {
             stopLockTask()
-            Log.d("CBT", "Screen Pinning dilepaskan")
+
+            Log.d("CBT", "Screen Pinning dilepaskan secara normal.")
+
         } catch (e: Exception) {
+
             Log.e("CBT", "Gagal melepaskan Screen Pinning", e)
         }
+    }
+
+    // ---------- DIALOG PENUTUPAN ----------
+
+    private fun showTerminationDialog(
+        title: String,
+        message: String
+    ) {
+
+        if (terminationDialogShowing || exitConfirmed) return
+
+        terminationDialogShowing = true
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("Mengerti") { _, _ ->
+
+                exitConfirmed = true
+
+                handler.removeCallbacksAndMessages(null)
+
+                finishAndRemoveTask()
+            }
+            .setCancelable(false)
+            .show()
     }
 
     // ---------- WEBVIEW SETUP ----------
@@ -117,6 +270,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupWebView() {
+
         val settings = webView.settings
 
         settings.javaScriptEnabled = true
@@ -129,13 +283,12 @@ class MainActivity : AppCompatActivity() {
         settings.allowFileAccess = false
         settings.allowContentAccess = false
 
-        if (android.os.Build.VERSION.SDK_INT >=
-            android.os.Build.VERSION_CODES.O
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             settings.safeBrowsingEnabled = true
         }
 
         CookieManager.getInstance().setAcceptCookie(true)
+
         CookieManager.getInstance()
             .setAcceptThirdPartyCookies(webView, true)
 
@@ -157,6 +310,7 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     false
                 } else {
+
                     Toast.makeText(
                         this@MainActivity,
                         "Tautan di luar domain ujian diblokir",
@@ -172,6 +326,7 @@ class MainActivity : AppCompatActivity() {
                 url: String,
                 favicon: android.graphics.Bitmap?
             ) {
+
                 errorOverlay.visibility = View.GONE
                 progressBar.visibility = View.VISIBLE
             }
@@ -180,6 +335,7 @@ class MainActivity : AppCompatActivity() {
                 view: WebView,
                 url: String
             ) {
+
                 progressBar.visibility = View.GONE
             }
 
@@ -188,7 +344,9 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest,
                 error: WebResourceError
             ) {
+
                 if (request.isForMainFrame) {
+
                     progressBar.visibility = View.GONE
                     errorOverlay.visibility = View.VISIBLE
                 }
@@ -199,6 +357,7 @@ class MainActivity : AppCompatActivity() {
                 handler: SslErrorHandler,
                 error: android.net.http.SslError
             ) {
+
                 handler.cancel()
 
                 Toast.makeText(
@@ -215,6 +374,7 @@ class MainActivity : AppCompatActivity() {
                 view: WebView,
                 newProgress: Int
             ) {
+
                 progressBar.progress = newProgress
             }
 
@@ -229,9 +389,13 @@ class MainActivity : AppCompatActivity() {
                 val intent = params.createIntent()
 
                 try {
+
                     fileChooserLauncher.launch(intent)
+
                 } catch (e: ActivityNotFoundException) {
+
                     filePathCallback = null
+
                     return false
                 }
 
@@ -243,8 +407,17 @@ class MainActivity : AppCompatActivity() {
     // ---------- ERROR OVERLAY ----------
 
     private fun setupErrorOverlay() {
+
         findViewById<View>(R.id.retryButton).setOnClickListener {
-            webView.loadUrl(getString(R.string.exam_url))
+
+            if (isScreenPinned() && !exitConfirmed) {
+
+                webView.loadUrl(getString(R.string.exam_url))
+
+            } else {
+
+                checkAfterUnpin()
+            }
         }
     }
 
@@ -252,44 +425,71 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
+
+        if (isScreenPinned()) {
+
+            if (webView.canGoBack()) {
+
+                webView.goBack()
+
+            } else {
+
+                Toast.makeText(
+                    this,
+                    "Gunakan tombol X untuk keluar dari aplikasi",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
         } else {
-            Toast.makeText(
-                this,
-                "Gunakan tombol X untuk keluar dari aplikasi",
-                Toast.LENGTH_SHORT
-            ).show()
+
+            checkAfterUnpin()
         }
     }
 
     // ---------- TOMBOL X ----------
 
     private fun setupExitButton() {
+
         findViewById<ImageButton>(R.id.exitButton).setOnClickListener {
+
             confirmExit()
         }
     }
 
     private fun confirmExit() {
+
         AlertDialog.Builder(this)
             .setTitle(R.string.exit_dialog_title)
             .setMessage(R.string.exit_dialog_message)
             .setPositiveButton(R.string.exit_confirm) { _, _ ->
 
-                // Lepaskan penguncian setelah siswa menyetujui keluar
+                exitConfirmed = true
+
+                handler.removeCallbacksAndMessages(null)
+
                 releaseExamPinning()
 
-                // Tutup aplikasi
                 finishAndRemoveTask()
             }
             .setNegativeButton(R.string.exit_cancel, null)
             .show()
     }
 
-    // ---------- DESTROY ----------
+    // ---------- LIFECYCLE ----------
+
+    override fun onResume() {
+        super.onResume()
+
+        if (wasPinned) {
+            checkAfterUnpin()
+        }
+    }
 
     override fun onDestroy() {
+
+        handler.removeCallbacksAndMessages(null)
+
         if (::webView.isInitialized) {
             webView.destroy()
         }
