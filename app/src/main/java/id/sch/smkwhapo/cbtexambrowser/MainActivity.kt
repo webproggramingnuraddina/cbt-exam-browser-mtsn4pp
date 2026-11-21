@@ -1,3 +1,4 @@
+
 package id.sch.smkwhapo.cbtexambrowser
 
 import android.app.Activity
@@ -5,6 +6,7 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.webkit.*
 import android.widget.ImageButton
@@ -19,10 +21,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var errorOverlay: View
 
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
     private val fileChooserLauncher =
-        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
-            val data = if (result.resultCode == Activity.RESULT_OK) result.data else null
-            val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, data)
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            val data =
+                if (result.resultCode == Activity.RESULT_OK) result.data else null
+
+            val uris = WebChromeClient.FileChooserParams.parseResult(
+                result.resultCode,
+                data
+            )
+
             filePathCallback?.onReceiveValue(uris)
             filePathCallback = null
         }
@@ -30,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
         hideSystemBars()
 
         webView = findViewById(R.id.webView)
@@ -37,19 +49,24 @@ class MainActivity : AppCompatActivity() {
         errorOverlay = findViewById(R.id.errorOverlay)
 
         setupWebView()
-setupErrorOverlay()
-setupExitButton()
-enterExamPinning()
+        setupErrorOverlay()
+        setupExitButton()
 
-// Aktifkan penguncian perangkat
-enterKioskMode()
+        // Aktifkan Screen Pinning satu kali
+        enterExamPinning()
 
-webView.loadUrl(getString(R.string.exam_url))
+        // Buka halaman CBT
+        webView.loadUrl(getString(R.string.exam_url))
     }
+
+    // ---------- FULLSCREEN ----------
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemBars()
+
+        if (hasFocus) {
+            hideSystemBars()
+        }
     }
 
     private fun hideSystemBars() {
@@ -63,78 +80,106 @@ webView.loadUrl(getString(R.string.exam_url))
                 or View.SYSTEM_UI_FLAG_FULLSCREEN
             )
     }
-    // ---------- KIOSK MODE ----------
-private fun enterKioskMode() {
-    try {
-        startLockTask()
-    } catch (e: Exception) {
-        Toast.makeText(
-            this,
-            "Gagal mengaktifkan mode ujian",
-            Toast.LENGTH_LONG
-        ).show()
-    }
-}
 
+    // ---------- SCREEN PINNING ----------
 
-private fun enterExamPinning() {
-    try {
-        if (android.os.Build.VERSION.SDK_INT >=
-            android.os.Build.VERSION_CODES.LOLLIPOP) {
+    private fun enterExamPinning() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >=
+                android.os.Build.VERSION_CODES.LOLLIPOP
+            ) {
+                startLockTask()
+            }
+        } catch (e: Exception) {
+            Log.e("CBT", "Gagal mengaktifkan Screen Pinning", e)
 
-            startLockTask()
+            Toast.makeText(
+                this,
+                "Gagal mengaktifkan penguncian aplikasi",
+                Toast.LENGTH_LONG
+            ).show()
         }
-    } catch (e: Exception) {
-        android.util.Log.e(
-            "CBT",
-            "Gagal mengaktifkan penyematan aplikasi",
-            e
-        )
     }
-}
 
+    private fun releaseExamPinning() {
+        try {
+            stopLockTask()
+            Log.d("CBT", "Screen Pinning dilepaskan")
+        } catch (e: Exception) {
+            Log.e("CBT", "Gagal melepaskan Screen Pinning", e)
+        }
+    }
 
-    // ---------- WebView setup ----------
+    // ---------- WEBVIEW SETUP ----------
 
-    private val allowedHost by lazy { getString(R.string.allowed_host) }
+    private val allowedHost by lazy {
+        getString(R.string.allowed_host)
+    }
 
     private fun setupWebView() {
         val settings = webView.settings
+
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        settings.mixedContentMode =
+            WebSettings.MIXED_CONTENT_NEVER_ALLOW
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = false
         settings.allowContentAccess = false
-        // Google Safe Browsing (blocks known phishing/malware pages)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+
+        if (android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.O
+        ) {
             settings.safeBrowsingEnabled = true
         }
 
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+        CookieManager.getInstance()
+            .setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+
                 val host = request.url.host ?: return true
                 val scheme = request.url.scheme
                 val isHttps = scheme == "https"
-                return if (isHttps && (host == allowedHost || host.endsWith(".$allowedHost"))) {
-                    false // biarkan WebView yang memuatnya
+
+                return if (
+                    isHttps &&
+                    (host == allowedHost ||
+                        host.endsWith(".$allowedHost"))
+                ) {
+                    false
                 } else {
-                    Toast.makeText(this@MainActivity, "Tautan di luar domain ujian diblokir", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Tautan di luar domain ujian diblokir",
+                        Toast.LENGTH_SHORT
+                    ).show()
+
                     true
                 }
             }
 
-            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+            override fun onPageStarted(
+                view: WebView,
+                url: String,
+                favicon: android.graphics.Bitmap?
+            ) {
                 errorOverlay.visibility = View.GONE
                 progressBar.visibility = View.VISIBLE
             }
 
-            override fun onPageFinished(view: WebView, url: String) {
+            override fun onPageFinished(
+                view: WebView,
+                url: String
+            ) {
                 progressBar.visibility = View.GONE
             }
 
@@ -149,15 +194,27 @@ private fun enterExamPinning() {
                 }
             }
 
-            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
-                // Jangan pernah mengabaikan error SSL diam-diam — batalkan koneksi yang tidak aman.
+            override fun onReceivedSslError(
+                view: WebView,
+                handler: SslErrorHandler,
+                error: android.net.http.SslError
+            ) {
                 handler.cancel()
-                Toast.makeText(this@MainActivity, "Koneksi tidak aman diblokir", Toast.LENGTH_LONG).show()
+
+                Toast.makeText(
+                    this@MainActivity,
+                    "Koneksi tidak aman diblokir",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) {
+
+            override fun onProgressChanged(
+                view: WebView,
+                newProgress: Int
+            ) {
                 progressBar.progress = newProgress
             }
 
@@ -166,18 +223,24 @@ private fun enterExamPinning() {
                 callback: ValueCallback<Array<Uri>>,
                 params: FileChooserParams
             ): Boolean {
+
                 filePathCallback = callback
+
                 val intent = params.createIntent()
+
                 try {
                     fileChooserLauncher.launch(intent)
                 } catch (e: ActivityNotFoundException) {
                     filePathCallback = null
                     return false
                 }
+
                 return true
             }
         }
     }
+
+    // ---------- ERROR OVERLAY ----------
 
     private fun setupErrorOverlay() {
         findViewById<View>(R.id.retryButton).setOnClickListener {
@@ -185,18 +248,27 @@ private fun enterExamPinning() {
         }
     }
 
-    // ---------- Tombol Back: mundur di dalam WebView dulu, baru tawarkan keluar ----------
+    // ---------- TOMBOL BACK ----------
+
+    @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (webView.canGoBack()) {
             webView.goBack()
         } else {
-            confirmExit()
+            Toast.makeText(
+                this,
+                "Gunakan tombol X untuk keluar dari aplikasi",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
-    // ---------- Tombol keluar yang terlihat ----------
+    // ---------- TOMBOL X ----------
+
     private fun setupExitButton() {
-        findViewById<ImageButton>(R.id.exitButton).setOnClickListener { confirmExit() }
+        findViewById<ImageButton>(R.id.exitButton).setOnClickListener {
+            confirmExit()
+        }
     }
 
     private fun confirmExit() {
@@ -204,15 +276,24 @@ private fun enterExamPinning() {
             .setTitle(R.string.exit_dialog_title)
             .setMessage(R.string.exit_dialog_message)
             .setPositiveButton(R.string.exit_confirm) { _, _ ->
-    stopLockTask()
-    finishAndRemoveTask()
-}
+
+                // Lepaskan penguncian setelah siswa menyetujui keluar
+                releaseExamPinning()
+
+                // Tutup aplikasi
+                finishAndRemoveTask()
+            }
             .setNegativeButton(R.string.exit_cancel, null)
             .show()
     }
 
+    // ---------- DESTROY ----------
+
     override fun onDestroy() {
-        webView.destroy()
+        if (::webView.isInitialized) {
+            webView.destroy()
+        }
+
         super.onDestroy()
     }
 }
